@@ -22,7 +22,7 @@ export function ActivityCanvas({
       aria-label="Visualizzazione delle modifiche"
     >
       <div className="canvas-heading">
-        <span>WIKIPEDIA / LIVE</span>
+        <span>Open Street Map / LIVE</span>
         <span>
           {settings.languages.length}{" "}
           {settings.languages.length === 1 ? "edizione" : "edizioni"}

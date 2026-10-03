@@ -31,6 +31,20 @@ export function About() {
         >
           Progetto originale Hatnote ↗
         </a>
+        <a
+          href="https://portfolio-bice-three-70.vercel.app/"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          hiiddenPc
+        </a>
+        <a
+          href="https://linktr.ee/karmagally"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          karmagally
+        </a>
       </div>
     </footer>
   );
