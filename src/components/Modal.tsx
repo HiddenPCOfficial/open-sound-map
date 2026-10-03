@@ -50,7 +50,7 @@ export function Modal({
     >
       <div className="modal-header">
         <div>
-          <span className="modal-eyebrow">LISTEN TO WIKIPEDIA</span>
+          <span className="modal-eyebrow">LISTEN TO OPEN STREET MAP</span>
           <h2 id="modal-title">{title}</h2>
           <p id="modal-description">{subtitle}</p>
         </div>
