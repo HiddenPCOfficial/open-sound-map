@@ -14,14 +14,11 @@
     "node": ">=20.9.0"
   },
   "dependencies": {
-    "maplibre-gl": "^6.11.2",
     "next": "^16.3.8",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "three": "^0.186.1",
-    "tone": "^15.1.22",
-    "topojson-client": "^3.1.0",
-    "world-atlas": "^2.0.2"
+    "topojson-client": "^3.1.0"
   },
   "devDependencies": {
     "@types/node": "^26.6.4",
