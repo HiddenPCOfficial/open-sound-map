@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { SCALES, isScaleId } from "@/lib/music";
-import { parseTags } from "@/lib/settings";
+import { isIntervalScale, parseTags } from "@/lib/settings";
 import type { Settings } from "@/types/wiki";
 
 const TOGGLES = [
@@ -19,6 +19,7 @@ export function SettingsPanel({
   music?: ReactNode;
 }) {
   const [tab, setTab] = useState("music");
+  const [intervalDraft, setIntervalDraft] = useState<string | null>(null);
   return (
     <section className="panel settings" id="settings">
       <nav className="settings-tabs" aria-label="Categorie impostazioni">
@@ -50,11 +51,31 @@ export function SettingsPanel({
             </option>
           ))}
         </select>
+        <label htmlFor="interval-scale">Fattore di durata tra gli eventi</label>
+        <input
+          id="interval-scale"
+          className="tag-input"
+          type="number"
+          min={0.01}
+          max={10}
+          step={0.01}
+          value={intervalDraft ?? settings.intervalScale}
+          onChange={(event) => {
+            setIntervalDraft(event.target.value);
+            const value = event.target.valueAsNumber;
+            if (isIntervalScale(value)) onChange({ intervalScale: value });
+          }}
+          onBlur={() => setIntervalDraft(null)}
+        />
         <p className="hint">
-          Una scala comune a tutti gli eventi, su tre ottave. Modifiche piccole:
-          note acute; grandi: note gravi. La dimensione indica il numero di
-          oggetti aggiornati nel changeset. Durante i picchi vengono riprodotte
-          meno note.
+          Moltiplica l’intervallo originale: 0,08 trasforma 100 secondi in 8
+          secondi; 1 mantiene la durata originale. Valori più bassi accelerano
+          la sequenza. Si applica subito anche all’attesa in corso.
+        </p>
+        <p className="hint">
+          Ogni nodo, via o relazione modificata genera un cerchio e una nota
+          nella scala scelta. Gli elementi vengono mostrati e suonati uno
+          alla volta; durante i picchi gli elementi successivi restano in coda.
         </p>
       </fieldset>
       <fieldset hidden={tab !== "display"}>

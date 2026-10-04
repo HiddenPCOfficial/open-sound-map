@@ -1,5 +1,7 @@
 import type { ScaleId } from '../lib/music';
 export interface WikiEvent {
+  osm?: { type: 'node' | 'way' | 'relation'; id: number; version: number; changesetId: number; action: 'create' | 'modify' | 'delete' };
+  changesetUrl?: string;
   location?: { lat: number; lon: number };
   id: string;
   kind: 'edit' | 'welcome';
@@ -17,6 +19,10 @@ export interface WikiEvent {
   reverted: boolean;
   hashtags: string[];
   receivedAt: number;
+  /** Original edit time in milliseconds since the Unix epoch. */
+  editedAt?: number;
+  /** Arrival time preserved when the presentation queue updates receivedAt. */
+  observedAt?: number;
 }
 
 export interface Settings {
@@ -24,6 +30,7 @@ export interface Settings {
   tags: string[];
   volume: number;
   scale: ScaleId;
+  intervalScale: number;
   muted: boolean;
   hideTitles: boolean;
   hideWelcomes: boolean;

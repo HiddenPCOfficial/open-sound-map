@@ -1,6 +1,6 @@
 import { editDuration } from '../lib/mp3';
 import { resumePlayback, unlockAudioContext } from '../lib/audio';
-import { DEFAULT_SCALE, getNote, NoteLimiter, type ScaleId } from '../lib/music';
+import { DEFAULT_SCALE, getEditSound, type ScaleId } from '../lib/music';
 import type { WikiEvent } from '../types/wiki';
 import * as Tone from 'tone';
 
@@ -14,11 +14,17 @@ export class AudioEngine {
   private active = new Set<AudioScheduledSourceNode>();
   private abort = new AbortController();
   private disposed = false;
-  private limiter = new NoteLimiter();
+  private queue: { event: WikiEvent; scale: ScaleId; url?: string | null; resolve: () => void; reject: (error: unknown) => void }[] = [];
+  private queueTimer: ReturnType<typeof setTimeout> | null = null;
+  private pumping = false;
+  private playbackGeneration = 0;
+  private previousEdit?: WikiEvent;
+  private previousMidi?: number;
+  private segments = new Map<AudioBufferSourceNode, { start: number; offset: number; duration: number; song: AudioBuffer; url: string | null; envelope: GainNode }>();
   private toneContext: Tone.Context | null = null;
   constructor(private onInterrupted: () => void = () => {}) {}
   private checkPlayback = (): void => {
-    if (!this.disposed && !this.isRunning()) this.onInterrupted();
+    if (!this.disposed && !this.isRunning()) { this.stopSegment(); this.onInterrupted(); }
   };
   isRunning(): boolean {
     return this.context?.state === 'running' && (!this.toneContext || this.toneContext.state === 'running');
@@ -26,79 +32,175 @@ export class AudioEngine {
 
   private songUrl: string | null = null;
   private songCache = new Map<string, AudioBuffer>();
+  private songDownloads = new Map<string, Promise<AudioBuffer>>();
   private songCursors = new Map<string, number>();
-  private songLoading = false;
   private song: AudioBuffer | null = null;
-  private segment: AudioBufferSourceNode | null = null;
   private cursor = 0;
-  private segmentStarted = 0;
-  private segmentOffset = 0;
   private songRequest = 0;
   private minSeconds = 0.5;
   private maxSeconds = 5;
 
   setSegmentRange(min: number, max: number): void { this.minSeconds = min; this.maxSeconds = max; }
+  eventDuration(event: WikiEvent, url?: string | null, scale: ScaleId = DEFAULT_SCALE): number {
+    return (url === undefined ? this.songUrl : url) ? (event.osm ? this.minSeconds : editDuration(event.delta, this.minSeconds, this.maxSeconds)) : getEditSound(event, scale, this.previousEdit, this.previousMidi).interval;
+  }
   stopSegment(): void {
-    if (this.segment && this.context && this.song) {
-      this.cursor = (this.segmentOffset + this.context.currentTime - this.segmentStarted) % this.song.duration;
-      this.segment.stop();
-      this.segment = null;
+    console.info('[AudioEngine] Arresto audio', { eventiAnnullati: this.queue.length, segmentiAttivi: this.segments.size });
+    this.playbackGeneration++;
+    this.songRequest++;
+    if (this.queueTimer) clearTimeout(this.queueTimer);
+    this.queueTimer = null;
+    for (const item of this.queue.splice(0)) item.resolve();
+    const now = this.context?.currentTime ?? 0;
+    // Preserve the actual playback position, not the end of a scheduled segment.
+    for (const [source, segment] of this.segments) {
+      const elapsed = Math.max(0, Math.min(segment.duration, now - segment.start));
+      const cursor = (segment.offset + elapsed) % segment.song.duration;
+      if (segment.url) this.songCursors.set(segment.url, cursor);
+      if (segment.url === this.songUrl) this.cursor = cursor;
+      source.stop();
     }
+    this.segments.clear();
+    this.addSynth?.releaseAll();
+    this.removeSynth?.releaseAll();
+    this.previousEdit = undefined;
+    this.previousMidi = undefined;
   }
   async selectSong(url: string | null): Promise<void> {
-    const request = ++this.songRequest;
     this.stopSegment();
+    await this.loadSong(url);
+  }
+  private async loadSong(url: string | null): Promise<void> {
+    const request = ++this.songRequest;
     if (this.songUrl) this.songCursors.set(this.songUrl, this.cursor);
     this.songUrl = url;
     this.song = null;
     this.cursor = 0;
-    this.songLoading = Boolean(url);
     if (!url) return;
-    try {
     await this.enable();
-    let buffer = this.songCache.get(url);
-    if (!buffer) {
-    const response = await fetch(url, { signal: this.abort.signal });
-    if (!response.ok) throw new Error('Impossibile caricare il brano');
-    buffer = await this.context!.decodeAudioData(await response.arrayBuffer());
-    if (!this.disposed) this.songCache.set(url, buffer);
-    }
+    const buffer = await this.prepareSong(url);
     if (request !== this.songRequest || this.disposed) return;
-    for (const source of this.active) source.stop();
     this.song = buffer;
     this.cursor = this.songCursors.get(url) ?? 0;
-    } finally { if (request === this.songRequest) this.songLoading = false; }
   }
-  async playLocation(event: WikiEvent, url: string | null, scale: ScaleId): Promise<void> {
-    // Let the current segment finish before changing countries; never queue edits.
-    if (this.segment || this.songLoading || !this.context || this.context.state !== 'running') return;
-    if (this.songUrl !== url) await this.selectSong(url);
-    if (this.songUrl === url && !this.disposed) this.play(event, scale);
+  private prepareSong(url: string): Promise<AudioBuffer> {
+    const cached = this.songCache.get(url);
+    if (cached) return Promise.resolve(cached);
+    const downloading = this.songDownloads.get(url);
+    if (downloading) return downloading;
+    const download = (async () => {
+      const response = await fetch(url, { signal: this.abort.signal });
+      if (!response.ok) throw new Error('Impossibile caricare il brano');
+      const buffer = await this.context!.decodeAudioData(await response.arrayBuffer());
+      if (!this.disposed) this.songCache.set(url, buffer);
+      return buffer;
+    })().finally(() => this.songDownloads.delete(url));
+    this.songDownloads.set(url, download);
+    return download;
   }
-  private playSegment(bytes: number): void {
-    if (!this.context || !this.gain || !this.song || this.segment) return;
-    const now = this.context.currentTime;
-    const duration = Math.min(editDuration(bytes, this.minSeconds, this.maxSeconds), this.song.duration - this.cursor);
+  playLocation(event: WikiEvent, url: string | null, scale: ScaleId): Promise<void> {
+    return this.enqueue(event, scale, url);
+  }
+  private enqueue(event: WikiEvent, scale: ScaleId, url?: string | null): Promise<void> {
+    if (event.kind !== 'edit' || this.disposed || !this.isRunning()) {
+      console.info('[AudioEngine] Audio non riprodotto', {
+        eventId: event.id,
+        motivo: event.kind !== 'edit' ? 'evento non musicale' : this.disposed ? 'motore chiuso' : 'contesto audio non attivo: abilita o riattiva audio',
+        statoAudio: this.context?.state ?? 'non inizializzato',
+        statoTone: this.toneContext?.state ?? 'non inizializzato',
+      });
+      return Promise.resolve();
+    }
+    // Download upcoming country tracks while earlier changesets are playing.
+    if (url) void this.prepareSong(url).catch(() => {});
+    return new Promise((resolve, reject) => {
+      this.queue.push({ event, scale, url, resolve, reject });
+      void this.pump();
+    });
+  }
+  private async pump(): Promise<void> {
+    if (this.pumping || this.disposed || !this.isRunning()) return;
+    if (this.queueTimer) clearTimeout(this.queueTimer);
+    this.queueTimer = null;
+    this.pumping = true;
+    const generation = this.playbackGeneration;
+    try {
+      // EventSequence sets the spacing; sound duration must not delay later edits.
+      while (this.queue.length && this.isRunning()) {
+        const item = this.queue.shift()!;
+        try {
+          if (item.url !== undefined && this.songUrl !== item.url) {
+            console.info('[AudioEngine] Caricamento brano prima della nota', { eventId: item.event.id, url: item.url });
+            await this.loadSong(item.url);
+          }
+          if (generation !== this.playbackGeneration || this.disposed || !this.isRunning()) {
+            console.info('[AudioEngine] Riproduzione annullata dopo il caricamento', { eventId: item.event.id, statoAudio: this.context?.state });
+            item.resolve(); break;
+          }
+          const now = this.context!.currentTime + 0.1;
+          const duration = this.eventDuration(item.event, undefined, item.scale);
+          if (this.song) this.playSegment(now, duration);
+          this.playNote(item.event, item.scale, now);
+          console.info('[AudioEngine] Audio programmato', {
+            eventId: item.event.id,
+            attesaSecondi: 0.1,
+            inizioContestoSecondi: now,
+            durataSecondi: duration,
+            brano: this.songUrl ?? 'sintetizzatore',
+            statoAudio: this.context!.state,
+            eventiInCoda: this.queue.length,
+          });
+          item.resolve();
+        } catch (error) {
+          console.error('[AudioEngine] Errore di riproduzione', { eventId: item.event.id, error });
+          item.reject(error);
+        }
+      }
+    } finally {
+      this.pumping = false;
+      if (this.queue.length && !this.disposed && this.isRunning()) this.queueTimer = setTimeout(() => { void this.pump(); }, 25);
+    }
+  }
+  private playSegment(now: number, duration: number): void {
+    if (!this.context || !this.gain || !this.song) return;
+    // Adjacent or overlapping events using the same song share one source.
+    for (const [source, segment] of this.segments) {
+      const end = segment.start + segment.duration;
+      if (segment.song !== this.song || now < segment.start || now > end + 0.001) continue;
+      const extension = Math.max(0, now + duration - end);
+      if (extension === 0) return;
+      const fadeStart = Math.max(segment.start, now - 0.005);
+      segment.envelope.gain.cancelScheduledValues(fadeStart);
+      segment.envelope.gain.setValueAtTime(1, fadeStart);
+      segment.duration += extension;
+      segment.envelope.gain.setValueAtTime(1, end + extension - 0.005);
+      segment.envelope.gain.linearRampToValueAtTime(0, end + extension);
+      source.stop(end + extension);
+      this.cursor = (this.cursor + extension) % this.song.duration;
+      if (this.songUrl) this.songCursors.set(this.songUrl, this.cursor);
+      return;
+    }
     const source = this.context.createBufferSource();
     const envelope = this.context.createGain();
-    source.buffer = this.song;
+    const song = this.song;
+    const offset = this.cursor;
+    const url = this.songUrl;
+    source.buffer = song;
+    source.loop = true;
     envelope.gain.setValueAtTime(0, now);
-    envelope.gain.linearRampToValueAtTime(1, now + Math.min(0.02, duration / 4));
-    envelope.gain.setValueAtTime(1, now + Math.max(duration / 2, duration - 0.04));
+    envelope.gain.linearRampToValueAtTime(1, now + Math.min(0.005, duration / 4));
+    envelope.gain.setValueAtTime(1, now + duration - Math.min(0.005, duration / 4));
     envelope.gain.linearRampToValueAtTime(0, now + duration);
     source.connect(envelope).connect(this.gain);
-    this.segment = source;
-    this.segmentStarted = now;
-    this.segmentOffset = this.cursor;
+    this.segments.set(source, { start: now, offset, duration, song, url, envelope });
+    this.cursor = (offset + duration) % song.duration;
+    if (url) this.songCursors.set(url, this.cursor);
     source.onended = () => {
-      if (this.segment === source) {
-        this.cursor = (this.segmentOffset + duration) % this.song!.duration;
-        if (this.song!.duration - this.cursor < 0.01) this.cursor = 0;
-        this.segment = null;
-      }
+      this.segments.delete(source);
       source.disconnect(); envelope.disconnect();
     };
-    source.start(now, this.cursor, duration);
+    source.start(now, offset);
+    source.stop(now + duration);
   }
 
   async enable(): Promise<void> {
@@ -163,17 +265,14 @@ export class AudioEngine {
     source.stop(now + 0.4);
   }
   play(event: WikiEvent, scale: ScaleId = DEFAULT_SCALE): void {
-    if (event.kind !== 'edit') return;
-    if (!this.context || this.context.state !== 'running' || !this.gain) return;
-    if (this.songLoading) return;
-    // A selected MP3 may accompany an edit, but it never replaces its scale note.
-    if (this.song && event.kind === 'edit') this.playSegment(event.delta);
-    const now = this.context.currentTime;
-    if (!this.limiter.allow(now) || this.active.size >= 30) return;
-    const midi = event.newPage ? 60 : getNote(event.delta, scale);
-    const velocity = event.bot ? 0.28 : event.newPage ? 0.85 : 0.68;
-    const synth = event.delta >= 0 ? this.addSynth : this.removeSynth;
-    synth?.triggerAttackRelease(440 * 2 ** ((midi - 69) / 12), 0.25, this.toneContext!.now(), velocity);
+    void this.enqueue(event, scale).catch(() => this.onInterrupted());
+  }
+  private playNote(event: WikiEvent, scale: ScaleId, at: number): void {
+    const sound = getEditSound(event, scale, this.previousEdit, this.previousMidi);
+    const synth = sound.removal ? this.removeSynth : this.addSynth;
+    synth?.triggerAttackRelease(440 * 2 ** ((sound.midi - 69) / 12), sound.duration, at, sound.velocity);
+    this.previousEdit = event;
+    this.previousMidi = sound.midi;
   }
   private track(source: AudioScheduledSourceNode, gain: GainNode): void {
     this.active.add(source);
@@ -188,6 +287,7 @@ export class AudioEngine {
     for (const source of this.active) source.stop();
     this.active.clear();
     this.songCache.clear();
+    this.songDownloads.clear();
     this.songCursors.clear();
     this.addSynth?.dispose();
     this.removeSynth?.dispose();

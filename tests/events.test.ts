@@ -45,9 +45,9 @@ test('keeps article positions deterministic and circle sizes bounded', () => {
 });
 test('supports original hash settings and normalizes tags', () => {
   assert.deepEqual(parseTags('#Arte, arte SCIENZA'), ['arte', 'scienza']);
-  assert.deepEqual(parseHash('#it,en,notitles,nowelcomes'), { scale: 'major-pentatonic', languages: ['it', 'en'], hideTitles: true, hideWelcomes: true });
+  assert.deepEqual(parseHash('#it,en,notitles,nowelcomes'), { scale: 'major-pentatonic', intervalScale: 0.08, languages: ['it', 'en'], hideTitles: true, hideWelcomes: true });
   assert.deepEqual(parseHash('#unknown').languages, ['en']);
-  assert.equal(settingsHash({ ...DEFAULT_SETTINGS, languages: ['it'], hideTitles: true }), '#it,scale=major-pentatonic,notitles');
+  assert.equal(settingsHash({ ...DEFAULT_SETTINGS, languages: ['it'], hideTitles: true }), '#it,scale=major-pentatonic,intervalScale=0.08,notitles');
   assert.deepEqual(parseHash(settingsHash({ ...DEFAULT_SETTINGS, languages: [] })).languages, []);
 });
 test('preserves exact revision IDs and rejects invalid revision values', () => {
@@ -60,4 +60,11 @@ test('preserves exact revision IDs and rejects invalid revision values', () => {
   const invalid = normalizeEvent({ ...payload, revision: { old: -1, new: '1235' } })!;
   assert.equal(invalid.previousRevisionId, undefined);
   assert.equal(invalid.revisionId, undefined);
+});
+
+test('Interval scaling survives URL sharing and invalid values use 0.08', () => {
+  assert.equal(parseHash(settingsHash({ ...DEFAULT_SETTINGS, intervalScale: 0.25 })).intervalScale, 0.25);
+  for (const value of ['', '0', '-1', 'NaN', 'Infinity', '11']) {
+    assert.equal(parseHash('#intervalScale=' + value).intervalScale, 0.08);
+  }
 });

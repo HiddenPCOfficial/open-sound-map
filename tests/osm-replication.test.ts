@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { gzipSync } from 'node:zlib';
-import { parseCursor, parseReplication, replicationPath, replicationEvents } from '../src/lib/osmReplication';
+import { parseCursor, parseChangesetElements, parseReplication, replicationPath, replicationEvents } from '../src/lib/osmReplication';
 import { normalizeChangeset } from '../src/lib/osm';
 import { GET } from '../src/app/api/osm/stream/route';
 
@@ -39,6 +39,10 @@ test('SSE resumes inside a file and delivers all intervening files, including ov
   const requested: string[] = [];
   const ids = Array.from({ length: 120 }, (_, i) => i + 100);
   globalThis.fetch = async input => {
+    if (String(input).endsWith('/download')) {
+      const id = Number(String(input).split('/').at(-2));
+      return new Response(`<osmChange><modify><node id="${id}" changeset="${id}" version="1" user="Mapper" lat="41" lon="11"/></modify></osmChange>`);
+    }
     const path = String(input).split('/').pop()!;
     requested.push(path);
     if (path === 'state.yaml') return new Response('---\nsequence: 1236\n');
@@ -112,4 +116,30 @@ test('An unavailable upstream reports reconnecting and invalid cursors return 40
     controller.abort();
     assert.equal((await pending).done, true);
   } finally { await iterator.return(undefined); globalThis.fetch = previous; }
+});
+
+test('Changeset download emits every node, way and relation version including deletions', () => {
+  const elements = parseChangesetElements(`<osmChange>
+    <create><node id="1" version="1" changeset="12" lat="40" lon="11"><tag k="name" v="Park &amp; trees"/></node></create>
+    <modify><node id="1" version="2" changeset="12"/><way id="2" version="3" changeset="12"><nd ref="1"/></way></modify>
+    <delete><relation id="3" version="4" changeset="12"/></delete>
+  </osmChange>`);
+  assert.equal(elements.length, 4);
+  assert.deepEqual(elements.map(item => [item.type, item.id, item.version, item.action]), [
+    ['node', 1, 1, 'create'], ['node', 1, 2, 'modify'], ['way', 2, 3, 'modify'], ['relation', 3, 4, 'delete'],
+  ]);
+  assert.deepEqual(elements[0].tags, { name: 'Park & trees' });
+  assert.equal(elements[0].lat, 40);
+  assert.deepEqual(parseChangesetElements('<osmChange/>'), []);
+  assert.throws(() => parseChangesetElements('<osmChange><node></osmChange>'));
+});
+
+test('Object timestamps survive XML parsing and edits are ordered by time across action groups', () => {
+  const elements = parseChangesetElements(`<osmChange>
+    <create><node id="1" version="1" changeset="12" timestamp="2026-10-04T15:07:00Z"/></create>
+    <modify><way id="2" version="3" changeset="12" timestamp="2026-10-04T15:06:00Z"/></modify>
+    <delete><relation id="3" version="4" changeset="12" timestamp="2026-10-04T15:08:00Z"/></delete>
+  </osmChange>`);
+  assert.deepEqual(elements.map(item => item.id), [2, 1, 3]);
+  assert.deepEqual(elements.map(item => item.timestamp), ['2026-10-04T15:06:00Z', '2026-10-04T15:07:00Z', '2026-10-04T15:08:00Z']);
 });

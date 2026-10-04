@@ -16,3 +16,27 @@ export function normalizeChangeset(payload: unknown, now = Date.now()): WikiEven
     location: valid ? { lat: (Number(c.min_lat) + Number(c.max_lat)) / 2, lon: (Number(c.min_lon) + Number(c.max_lon)) / 2 } : undefined,
   };
 }
+
+/** One real object version from a changeset download, not a synthetic count. */
+export function normalizeOsmElement(payload: unknown, changeset: unknown, now = Date.now()): WikiEvent | null {
+  const base = normalizeChangeset(changeset, now);
+  if (!base || !payload || typeof payload !== 'object') return null;
+  const item = payload as Record<string, unknown>;
+  if (!['node', 'way', 'relation'].includes(String(item.type)) || !['create', 'modify', 'delete'].includes(String(item.action))) return null;
+  for (const value of [item.id, item.version, item.changeset]) if (!Number.isSafeInteger(value) || Number(value) <= 0) return null;
+  if (item.changeset !== (changeset as { id: number }).id) return null;
+  const tags = item.tags && typeof item.tags === 'object' ? item.tags as Record<string, unknown> : {};
+  const label = typeof tags.name === 'string' ? tags.name : `${item.type} #${item.id}`;
+  const timestamp = typeof item.timestamp === 'string' ? Date.parse(item.timestamp) : NaN;
+  const validLocation = typeof item.lat === 'number' && typeof item.lon === 'number' && Number.isFinite(item.lat) && Number.isFinite(item.lon) && Math.abs(item.lat) <= 90 && Math.abs(item.lon) <= 180;
+  return {
+    ...base, id: `osm:${item.type}:${item.id}:${item.version}`,
+    editedAt: Number.isFinite(timestamp) ? timestamp : undefined,
+    title: `${label} · ${base.title}`, user: typeof item.user === 'string' ? item.user : base.user,
+    url: `https://www.openstreetmap.org/${item.type}/${item.id}/history/${item.version}`,
+    changesetUrl: base.url, userUrl: `https://www.openstreetmap.org/user/${encodeURIComponent(typeof item.user === 'string' ? item.user : base.user)}`,
+    delta: item.action === 'delete' ? -1 : 1, newPage: item.action === 'create',
+    osm: { type: item.type as 'node' | 'way' | 'relation', id: Number(item.id), version: Number(item.version), changesetId: Number(item.changeset), action: item.action as 'create' | 'modify' | 'delete' },
+    location: validLocation ? { lat: Number(item.lat), lon: Number(item.lon) } : base.location,
+  };
+}

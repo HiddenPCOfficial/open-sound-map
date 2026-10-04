@@ -10,7 +10,7 @@ export function EditBubble({
   hideTitle: boolean;
   silent: boolean;
 }) {
-  const [x, y] = articlePosition(event.title);
+  const [x, y] = articlePosition(event.osm ? event.id : event.title);
   const radius = editRadius(event.delta);
   const type = event.anonymous ? "anonymous" : event.bot ? "bot" : "registered";
   return (

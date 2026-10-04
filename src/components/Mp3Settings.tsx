@@ -42,7 +42,7 @@ export function Mp3Settings({
       </select>
       {selectedTrack === LOCATION_MODE && (
         <p className="hint">
-          Il centro del changeset sceglie il brano del paese. Italia: Funiculì
+          La posizione dell’elemento sceglie il brano del paese. Italia: Funiculì
           Funiculà. Dove manca un brano vengono suonate le note. I confini sono
           approssimativi; il segmento in corso termina prima di cambiare paese.
         </p>
@@ -81,10 +81,10 @@ export function Mp3Settings({
       )}
       {selectedTrack && (
         <div className="segment-settings">
-          <h3>Durata per modifica</h3>
+          <h3>Durata per elemento</h3>
           <div className="segment-ranges">
             <label>
-              Minima · {segmentRange.min.toFixed(1)} s
+              Durata · {segmentRange.min.toFixed(1)} s
               <input
                 type="range"
                 min="0.2"
@@ -97,30 +97,12 @@ export function Mp3Settings({
                 }}
               />
             </label>
-            <label>
-              Massima · {segmentRange.max.toFixed(1)} s
-              <input
-                type="range"
-                min={segmentRange.min}
-                max="15"
-                step="0.1"
-                value={segmentRange.max}
-                onChange={(event) =>
-                  changeSegmentRange(
-                    segmentRange.min,
-                    Number(event.target.value),
-                  )
-                }
-              />
-            </label>
           </div>
           <p className="hint">
-            La durata cresce con i byte aggiunti o rimossi: da{" "}
-            {segmentRange.min.toFixed(1)} a {segmentRange.max.toFixed(1)}{" "}
-            secondi (10.000 byte o più). Il brano riprende dal punto precedente
-            e poi si ferma. Gli eventi durante un segmento non lo prolungano:
-            nessuna sovrapposizione o coda. Alla fine della canzone si riparte
-            dall’inizio.
+            Ogni oggetto modificato viene mostrato e suonato per{" "}
+            {segmentRange.min.toFixed(1)} secondi. Gli elementi successivi
+            restano in coda e il brano prosegue finché ci sono eventi.
+            Alla fine della canzone si riparte dall’inizio.
           </p>
         </div>
       )}

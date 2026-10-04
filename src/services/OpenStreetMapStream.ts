@@ -1,4 +1,4 @@
-import { normalizeChangeset } from '../lib/osm';
+import { normalizeOsmElement } from '../lib/osm';
 import type { ConnectionStatus, WikiEvent } from '../types/wiki';
 
 /** Receive replication events immediately; EventSource resumes after disconnects. */
@@ -8,7 +8,7 @@ export class OpenStreetMapStream {
   connect(onEvent: (event: WikiEvent) => void, onStatus: (status: ConnectionStatus) => void): void {
     this.close();
     onStatus('connecting');
-    const counts = new Map<number, number>();
+    const seen = new Set<string>();
     const source = new EventSource('/api/osm/stream');
     this.source = source;
     source.onopen = () => { if (this.source === source) onStatus('connected'); };
@@ -22,15 +22,19 @@ export class OpenStreetMapStream {
       if (this.source !== source) return;
       let item: unknown;
       try { item = JSON.parse(message.data); } catch { return; }
-      const event = normalizeChangeset(item);
-      if (!event) return;
-      const changeset = item as { id: number; changes_count: number };
-      const previous = counts.get(changeset.id);
-      if (previous !== undefined && changeset.changes_count <= previous) return;
-      counts.delete(changeset.id);
-      counts.set(changeset.id, changeset.changes_count);
-      if (counts.size > 4000) counts.delete(counts.keys().next().value!);
-      onEvent({ ...event, delta: previous === undefined ? event.delta : changeset.changes_count - previous });
+      if (!item || typeof item !== 'object' || !Array.isArray((item as { elements?: unknown }).elements)) return;
+      console.info('[OpenStreetMapStream] Blocco ricevuto', {
+        changesetId: (item as { id?: unknown }).id,
+        elementi: (item as { elements: unknown[] }).elements.length,
+      });
+      for (const element of (item as { elements: unknown[] }).elements) {
+        if (this.source !== source) return;
+        const event = normalizeOsmElement(element, item);
+        if (!event || seen.has(event.id)) continue;
+        seen.add(event.id);
+        if (seen.size > 100000) seen.delete(seen.values().next().value!);
+        onEvent(event);
+      }
     };
   }
 

@@ -6,165 +6,130 @@
 
 Gli aggiornamenti diventano cerchi animati, punti su un pianeta 3D e note musicali. L’utente può scegliere scala, volume, filtri hashtag e accompagnamento MP3.
 
-L’unità osservata è il **changeset**: un gruppo di aggiornamenti OpenStreetMap, che può contenere aggiunte, modifiche e rimozioni di più oggetti.
+L’unità mostrata e suonata è una **versione di un oggetto OSM**: nodo, via o relazione. Il changeset raggruppa queste modifiche; ciascun elemento genera un evento distinto.
 
-> Frase da presentare: «Il prodotto rende percepibile l’attività di una comunità: ogni gruppo di aggiornamenti alla mappa può diventare un evento visivo e sonoro».
+> Frase da presentare: «Il prodotto rende percepibile l’attività di una comunità: ogni oggetto aggiornato sulla mappa diventa un evento visivo e sonoro».
 
 ## 2. Architettura e flusso delle API
 
-Il progetto usa Next.js e React. Il browser gestisce interfaccia, filtri, rendering e audio; una rotta Next.js raccoglie i dati dal servizio esterno.
+Il progetto usa Next.js e React. Il browser riceve gli eventi su una connessione SSE e gestisce filtri, rendering e audio. Il server legge i file di replica pubblicati da OSM.
 
 ```mermaid
 sequenceDiagram
     participant U as Utente
     participant B as Browser / React
     participant N as API Next.js
-    participant O as API OpenStreetMap
+    participant O as Repliche OpenStreetMap
     U->>B: Apre il prodotto
-    B->>B: Legge le preferenze e avvia OpenStreetMapStream
-    B->>N: GET /api/osm/changesets
-    par Lista globale
-        N->>O: GET /api/0.6/changesets.json
-    and Area italiana recente
-        N->>O: GET /api/0.6/changesets.json?bbox=...&time=...
+    B->>N: EventSource GET /api/osm/stream
+    N-->>B: Connessione SSE aperta
+    N->>O: GET state.yaml
+    O-->>N: Ultima sequenza disponibile
+    loop Ogni file disponibile, in sequenza
+        N->>O: GET NNN/NNN/NNN.osm.gz
+        O-->>N: XML compresso dei changeset
+        N->>O: GET API changeset/id/download
+        O-->>N: Oggetti effettivi del changeset
+        N-->>B: SSE con metadati ed elements
+        B->>B: Valida, deduplica e accoda ogni oggetto
     end
-    O-->>N: JSON dei changeset
-    N->>N: Unisce, elimina duplicati e ordina
-    N-->>B: JSON { changesets: [...] }
-    B->>B: Valida e distribuisce gli eventi nel tempo
-    B->>B: Aggiorna cerchi, registro, statistiche e globo
-    U->>B: Attiva audio
-    B->>B: Sintetizza note per gli eventi successivi
-    Note over B,N: Il browser ripete la richiesta dopo ogni ciclo
+    B->>B: Mostra e suona un oggetto alla volta
+    Note over N,O: Controllo nuovi file ogni 10 secondi; OSM pubblica circa ogni minuto
+    Note over B,N: Dopo disconnessione EventSource invia Last-Event-ID
 ```
 
-**La fonte attiva è OpenStreetMap.** Nel repository restano nomi storici come `WikipediaApp`, `useWikipedia` e `WikiEvent`, ma il servizio istanziato dall’app è `OpenStreetMapStream`.
+**La fonte attiva è OpenStreetMap.** I nomi `WikipediaApp`, `useWikipedia` e `WikiEvent` sono storici; il servizio istanziato è `OpenStreetMapStream`.
 
 ## 3. Quali API vengono chiamate
 
 | Chiamante → destinatario | Metodo e URL | Scopo | Avvio / frequenza |
 | --- | --- | --- | --- |
-| Browser → backend del prodotto | `GET /api/osm/changesets` | Ricevere una lista unificata di changeset | Subito dopo l’inizializzazione delle preferenze; poi a ogni ciclo di polling |
-| Backend → OpenStreetMap | `GET https://api.openstreetmap.org/api/0.6/changesets.json` | Ottenere i changeset globali recenti | Durante la gestione della rotta interna, con cache Next.js e rivalidazione a 15 secondi |
-| Backend → OpenStreetMap | `GET https://api.openstreetmap.org/api/0.6/changesets.json?bbox=6.6,35.4,18.6,47.2&time=<timestamp>` | Integrare i changeset recenti nell’area italiana | In parallelo alla richiesta globale, con la stessa politica di cache |
+| Browser → backend | `GET /api/osm/stream` | Ricevere eventi SSE | Una connessione persistente dopo l’inizializzazione delle preferenze; riconnessione automatica |
+| Backend → OSM | `GET https://planet.openstreetmap.org/replication/changesets/state.yaml` | Leggere l’ultima sequenza pubblicata | All’avvio e dopo ogni ciclo, con attesa di 10 secondi |
+| Backend → OSM | `GET https://planet.openstreetmap.org/replication/changesets/NNN/NNN/NNN.osm.gz` | Leggere i changeset di ogni replica | Per ogni sequenza disponibile, senza saltare file intermedi |
+| Backend → API OSM | `GET https://api.openstreetmap.org/api/0.6/changeset/<id>/download` | Ottenere gli oggetti effettivi del changeset | Per ogni changeset non vuoto prima di emettere il messaggio SSE |
 
-Le chiamate applicative sono tutte `GET`, senza body. L’app legge l’attività pubblica: non invia modifiche alla mappa. Il percorso attuale non richiede chiavi API o autenticazione OSM.
+Le richieste sono `GET`, senza body, chiavi API o autenticazione. L’app legge dati pubblici e non modifica la mappa. La vecchia rotta `/api/osm/changesets` resta nel repository, ma il client attivo non la usa.
 
 ## 4. Cosa invia il browser e cosa invia il server
 
 ### Richiesta del browser
 
 ```http
-GET /api/osm/changesets
+GET /api/osm/stream
+Accept: text/event-stream
 ```
 
-Il browser non aggiunge parametri di lingua, hashtag o posizione dell’utente. I filtri hashtag vengono applicati dopo la ricezione dei dati, nel client.
-
-### Richieste del backend
-
-Il server manda due richieste parallele a OpenStreetMap, con questi header espliciti:
+Il browser gestisce `Accept` attraverso `EventSource`. Alla riconnessione aggiunge l’ultimo ID ricevuto, per esempio:
 
 ```http
-Accept: application/json
-User-Agent: ListenToOpenStreetMap/1.0
+Last-Event-ID: 7211593:5
 ```
 
-La seconda richiesta aggiunge:
+L’ID identifica la sequenza e il numero di elementi già consegnati in quel file. Lingue, hashtag e posizione del visitatore non vengono inviati; i filtri hashtag sono locali.
 
-- `bbox=6.6,35.4,18.6,47.2`: rettangolo geografico usato per coprire l’area italiana, comprese Sicilia e Sardegna. Il rettangolo può includere anche aree di paesi vicini.
-- `time=<timestamp ISO codificato nell’URL>`: inizio della finestra recente, calcolato circa dieci minuti prima, dopo aver arrotondato il momento corrente a intervalli di 15 secondi.
+### Richieste e risposta del backend
 
-Questi parametri sono calcolati dal server; non dipendono dalla posizione del visitatore o dalla vista selezionata.
+Il backend invia `User-Agent: ListenToOpenStreetMap/1.0`, disabilita la cache delle richieste esterne e applica un timeout di 15 secondi. La risposta SSE usa `Content-Type: text/event-stream`, `Cache-Control: no-cache, no-transform` e `X-Accel-Buffering: no` per evitare buffering negli intermediari che rispettano questi header.
 
 ## 5. Il lavoro dell’API interna
 
-La rotta `src/app/api/osm/changesets/route.ts`:
+La rotta `src/app/api/osm/stream/route.ts` e `src/lib/osmReplication.ts`:
 
-1. Avvia le due richieste con `Promise.allSettled`, così un errore di una fonte non impedisce di usare l’altra.
-2. Imposta un timeout di **12 secondi per richiesta esterna**.
-3. Chiede a Next.js di riutilizzare i dati con `next: { revalidate: 15 }`.
-4. Legge l’array `changesets`, oppure `elements` come formato alternativo.
-5. Unisce i risultati usando l’ID del changeset come chiave.
-6. Per uno stesso ID conserva la versione con il maggiore `changes_count`.
-7. Ordina per ID decrescente e restituisce `{ "changesets": [...] }`.
+1. Validano `Last-Event-ID`; un formato invalido restituisce `400`.
+2. Leggono `state.yaml`. Una prima connessione parte dall’ultima replica; una riconnessione riprende dal file e dall’indice indicati.
+3. Scaricano e decomprimono i file `.osm.gz`, validano l’XML e trasformano `num_changes` in `changes_count` e i tag XML in un oggetto JSON.
+4. Scaricano il dettaglio `osmChange` di ciascun changeset e inviano un messaggio SSE con metadati e array `elements`. Se il download fallisce, non avanzano il cursore oltre quel changeset.
+5. Inviano un checkpoint anche per i file vuoti e continuano con la sequenza successiva.
+6. Quando i file disponibili sono terminati, attendono 10 secondi prima di rileggere lo stato. Il keep-alive è un commento SSE e non genera un changeset.
+7. In caso di errore della sorgente inviano lo stato `reconnecting` e ritentano senza avanzare oltre il file fallito.
 
-Se una richiesta fallisce, la risposta può comunque essere `200` con i dati dell’altra. Se entrambe falliscono, il server risponde `502`:
-
-```json
-{
-  "error": "OpenStreetMap temporaneamente non disponibile"
-}
-```
-
-La cache riguarda le letture esterne del backend: la chiamata del browser alla rotta interna non implica sempre un nuovo accesso a OSM.
+La chiusura della connessione annulla le richieste e le attese del server. La rotta richiede un runtime Node.js e un hosting che supporti risposte HTTP in streaming.
 
 ## 6. Quali dati arrivano
 
-Esempio illustrativo dei campi usati dall’app, non una risposta acquisita dal servizio:
+Esempio illustrativo di un messaggio SSE:
 
-```json
-{
-  "changesets": [
-    {
-      "id": 123456,
-      "user": "MapperExample",
-      "changes_count": 12,
-      "min_lat": 45.46,
-      "max_lat": 45.48,
-      "min_lon": 9.18,
-      "max_lon": 9.20,
-      "tags": {
-        "comment": "Aggiornamento edifici #survey",
-        "hashtags": "#survey"
-      }
-    }
-  ]
-}
+```text
+id: 7211593:5
+data: {"id":123456,"user":"MapperExample","changes_count":3,"tags":{"comment":"Edifici #survey"},"elements":[{"type":"node","id":100,"version":2,"changeset":123456,"action":"modify","lat":45.47,"lon":9.19,"tags":{}},{"type":"way","id":200,"version":1,"changeset":123456,"action":"create","tags":{}},{"type":"relation","id":300,"version":4,"changeset":123456,"action":"delete","tags":{}}]}
+
 ```
 
 | Campo | Uso nel prodotto |
 | --- | --- |
-| `id` | Identifica il changeset e costruisce il collegamento ai dettagli OSM |
-| `user` | Mostra il nome dell’autore e costruisce il link al profilo |
-| `changes_count` | Misura gli oggetti aggiornati; alimenta dimensione del cerchio e scelta della nota |
-| `tags.comment` | Diventa il titolo dell’evento; in sua assenza si usa `Changeset #<id>` |
-| `tags.hashtags` e hashtag nel commento | Alimentano i filtri locali |
-| `min_lat`, `max_lat`, `min_lon`, `max_lon` | Permettono di calcolare il punto sul globo |
-| `tags.bot` | Segnala un bot quando il valore è `yes` |
+| `id`, `user`, `tags` del changeset | Collegamento al changeset, autore, commento e hashtag |
+| `changes_count` | Conteggio del riepilogo; non determina il numero di eventi simulati |
+| `elements[].type`, `id`, `version` | Identità dell’oggetto e deduplicazione |
+| `elements[].action` | Creazione, modifica o eliminazione |
+| `elements[].lat`, `lon` | Coordinate del nodo quando disponibili |
+| Bounding box del changeset | Posizione approssimativa per oggetti senza coordinate proprie |
 
-La risposta contiene riepiloghi dei changeset. Il prodotto non scarica il dettaglio di ogni singolo oggetto modificato.
+## 7. Una sequenza per visualizzazione e musica
 
-## 7. Come funzionano polling e aggiornamenti
+`OpenStreetMapStream` riceve i messaggi SSE, normalizza gli oggetti con `normalizeOsmElement` e deduplica per tipo, ID e versione. Conserva fino a 100.000 identificatori. Gli oggetti reali provengono dal download del changeset: non vengono inventati a partire da `changes_count`.
 
-`OpenStreetMapStream` esegue la prima richiesta immediatamente. Per ogni risposta:
+`EventSequence` accoda gli oggetti in ordine e ne presenta uno alla volta. Un changeset con tre elementi produce tre cerchi, tre righe di registro e, con audio attivo, tre note. I batch successivi entrano nella stessa coda. Senza audio il passo è 0,5 secondi. Con note attive segue la cadenza musicale calcolata; con MP3 usa la durata per elemento selezionata. La sequenza funziona anche senza audio o in mute; i filtri correnti vengono applicati al momento della presentazione. Il timestamp dell’evento viene aggiornato quando è mostrato, evitando che scada mentre aspetta in coda.
 
-1. Scorre la lista in ordine inverso, rispetto all’ordinamento ricevuto.
-2. Valida ogni changeset con `normalizeChangeset`: ID positivo, utente testuale e conteggio positivo.
-3. Confronta il conteggio con quello già osservato per lo stesso ID.
-4. Se il changeset è nuovo, genera un evento con il conteggio totale.
-5. Se il conteggio è aumentato, genera un evento con il solo incremento; se è uguale o inferiore, lo scarta.
-6. Distribuisce gli eventi con una pausa di `min(500 ms, 10.000 ms / numero eventi)` tra un evento e il successivo.
-7. Finita l’elaborazione del lotto, attende **15 secondi** prima del nuovo polling.
+`AudioEngine` programma le note sul tempo audio. Segmenti consecutivi dello stesso brano estendono una sola sorgente continua; i brani dei paesi successivi vengono precaricati. Un primo caricamento può richiedere attesa. Mute, volume zero, cambio della sorgente audio e sospensione fermano l’audio, mentre la presentazione continua. La chiusura cancella entrambe le code.
 
-**I 15 secondi sono una pausa dopo il ciclo**, non una frequenza esatta tra gli inizi delle richieste. Si aggiungono il tempo di rete e quello di distribuzione degli eventi.
+Il server suggerisce una riconnessione dopo 3 secondi. `EventSource` invia `Last-Event-ID`; il cursore riprende il changeset del file di replica, mentre gli identificatori degli oggetti evitano duplicati nella sessione. Le callback di connessioni sostituite vengono ignorate.
 
-Il primo caricamento presenta anche attività già recente. L’esperienza è aggiornata periodicamente: non usa un flusso push OSM e non garantisce di catturare tutti gli aggiornamenti globali.
-
-In caso di errore, lo stato passa a `reconnecting` e il servizio tenta di nuovo dopo 15 secondi. Quando il componente viene smontato, annulla la richiesta e ferma i timer.
+OSM pubblica repliche circa ogni minuto e il server controlla nuovi file ogni 10 secondi. I dati possono arrivare in batch: è la coda client a presentarli singolarmente. Una coda lunga aumenta il ritardo rispetto alla sorgente; quando si esaurisce, attende dati nuovi. La prima connessione non recupera tutta la cronologia precedente.
 
 ## 8. Dal JSON alla visualizzazione e alla musica
 
-La normalizzazione produce un evento interno `WikiEvent` con ID `osm:<id>:<changes_count>`. Il campo `delta` contiene il conteggio totale alla prima osservazione, oppure l’incremento nelle osservazioni successive.
+La normalizzazione produce un `WikiEvent` per versione di oggetto con ID `osm:<tipo>:<id>:<versione>`. Il campo `delta` è `+1` per creazioni e modifiche, `-1` per eliminazioni. `osm` conserva tipo, ID, versione, azione e ID del changeset; `changesetUrl` rimanda al gruppo di modifiche.
 
 `useWikipedia` elimina ulteriori duplicati e applica i filtri hashtag. Gli eventi corrispondenti aggiornano contatore, frequenza e registro; quelli esclusi possono restare visibili come cerchi attenuati e silenziosi.
 
 - **Cerchi:** fino a 180 eventi grafici; gli eventi OSM scadono dopo 60 secondi.
 - **Registro:** ultimi 20 eventi corrispondenti ai filtri.
 - **Pianeta:** riceve la lista del registro e mostra gli eventi con coordinate valide. Il flusso attuale gli passa quindi al massimo 20 eventi, anche se un’etichetta della UI riporta `/100`.
-- **Posizione:** centro del bounding box del changeset, calcolato facendo la media delle latitudini e delle longitudini minime e massime. È una posizione approssimativa dell’area aggiornata.
-- **Audio:** dopo l’attivazione dell’utente, Tone.js sintetizza note nella scala scelta; conteggi maggiori producono note più basse. Eventuali segmenti MP3 possono accompagnarle.
+- **Posizione:** coordinate del nodo quando disponibili; altrimenti centro del bounding box del changeset, una posizione approssimativa.
+- **Audio:** dopo l’attivazione dell’utente, Tone.js sintetizza note nella scala scelta; ogni elemento genera una nota. Eventuali segmenti MP3 possono accompagnarla.
 
-Il conteggio OSM non distingue, in questa pipeline, aggiunte da rimozioni: il `delta` emesso è positivo. La presenza di un sintetizzatore per rimozioni nel motore audio non significa che l’app riconosca le cancellazioni dai riepiloghi ricevuti.
+Il download distingue `create`, `modify` e `delete`; le eliminazioni usano il sintetizzatore delle rimozioni.
 
 ## 9. Altre richieste: file statici e collegamenti
 
@@ -176,7 +141,7 @@ Il conteggio OSM non distingue, in questa pipeline, aggiunte da rimozioni: il `d
 
 Queste sono richieste di asset, non API esterne di dati. I file MP3 scelti dal computer vengono letti tramite URL `blob:` nel browser: non vengono caricati sul server.
 
-Il clic su un evento apre `https://www.openstreetmap.org/changeset/<id>` in una nuova scheda; il link all’autore apre `https://www.openstreetmap.org/user/<nome codificato>`. Sono navigazioni verso pagine web.
+Il clic su un evento apre `https://www.openstreetmap.org/<tipo>/<id>/history/<versione>`; il dettaglio offre anche il collegamento al changeset. il link all’autore apre `https://www.openstreetmap.org/user/<nome codificato>`. Sono navigazioni verso pagine web.
 
 ## 10. Distinzione dal vecchio flusso Wikipedia
 
@@ -188,24 +153,28 @@ https://stream.wikimedia.org/v2/stream/recentchange
 
 Quel servizio usa `EventSource` per ricevere messaggi continui e beneficiare della riconnessione automatica del browser, ma **non è istanziato nel flusso attuale dell’app**.
 
-Il codice attuale non chiama API Wikipedia/Wikidata per ottenere coordinate e non incorpora Street View. Alcune parti del README e della documentazione descrivono funzionalità precedenti; questa presentazione segue il codice effettivamente collegato alla pagina.
+Il codice attuale non chiama API Wikipedia/Wikidata per ottenere coordinate e non incorpora Street View. I servizi Wikimedia e i relativi test restano come codice storico; questa presentazione segue il flusso OpenStreetMap collegato alla pagina.
 
 ## 11. Traccia breve per l’esposizione
 
-> «Quando apro l’app, il browser chiama la nostra API Next.js. Il server legge in parallelo due liste da OpenStreetMap: una globale e una dedicata all’area italiana recente. Unisce i risultati, rimuove i duplicati e restituisce JSON. Il browser riconosce nuovi changeset e aumenti di attività, li distribuisce nel tempo e aggiorna cerchi, registro e globo. Dopo l’attivazione dell’audio, gli stessi eventi producono musica. Il ciclo viene ripetuto con polling, mentre la cache del server riduce gli accessi al servizio esterno».
+> «Il browser mantiene una connessione SSE con la nostra API. Il server legge le repliche OpenStreetMap e scarica gli oggetti di ogni changeset. Il client li accoda: un nodo, una via o una relazione viene mostrata e suonata alla volta, anche se i dati arrivano insieme. Un changeset con tre elementi produce tre eventi e tre note. I batch successivi continuano la stessa sequenza; con un MP3 il brano prosegue finché ci sono eventi. Dopo una disconnessione il flusso riprende tramite l’ultimo ID ricevuto».
 
 ## Riferimenti nel repository
 
 - [Pagina e metadati del prodotto](src/app/layout.tsx)
 - [Composizione dell’interfaccia](src/components/WikipediaApp.tsx)
 - [Hook: eventi, filtri, statistiche e audio](src/hooks/useWikipedia.ts)
-- [Polling e deduplicazione OSM](src/services/OpenStreetMapStream.ts)
-- [API interna e richieste esterne](src/app/api/osm/changesets/route.ts)
-- [Normalizzazione dei changeset](src/lib/osm.ts)
+- [Client SSE e deduplicazione OSM](src/services/OpenStreetMapStream.ts)
+- [API SSE interna](src/app/api/osm/stream/route.ts)
+- [Lettura e ripresa delle repliche](src/lib/osmReplication.ts)
+- [Normalizzazione dei changeset e degli oggetti](src/lib/osm.ts)
 - [Pianeta e dati visualizzati](src/components/globe/PlanetView.tsx)
+- [Coda della presentazione](src/services/EventSequence.ts)
+- [Test della presentazione singola](tests/event-sequence.test.ts)
 - [Motore audio e caricamento MP3](src/services/AudioEngine.ts)
 - [Selezione musicale per paese](src/lib/locationMusic.ts)
-- [Test della rotta OSM](tests/osm-route.test.ts)
+- [Test SSE, XML e ripresa delle repliche](tests/osm-replication.test.ts)
+- [Test della coda audio e continuità MP3](tests/mp3.test.ts)
 - [Test della normalizzazione e del servizio OSM](tests/osm.test.ts)
 
 Documento ricostruito dal codice del repository il 4 ottobre 2026. Gli esempi descrivono l’implementazione; non costituiscono una verifica live della disponibilità delle API esterne.

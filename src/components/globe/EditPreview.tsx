@@ -3,16 +3,17 @@ export function EditPreview({ event }: { event: WikiEvent }) {
   return (
     <section className="edit-preview" aria-label="Dettagli della modifica">
       <div className="edit-preview-heading">
-        <span>CHANGESET OPENSTREETMAP</span>
+        <span>ELEMENTO OPENSTREETMAP</span>
         <a href={event.url} target="_blank" rel="noopener noreferrer">
-          Dettagli e oggetti modificati ↗
+          Apri la versione dell’elemento ↗
         </a>
       </div>
       <p>
-        {event.delta.toLocaleString("it-IT")} oggetti aggiornati. Il punto
-        indica il centro dell’area interessata; un changeset può coprire più
-        luoghi e contenere aggiunte, modifiche e rimozioni.
+        {event.osm ? `${event.osm.type} #${event.osm.id} · versione ${event.osm.version} · ${event.osm.action}` : 'Oggetto aggiornato'}.
+        {' '}Il punto usa le coordinate del nodo quando disponibili; altrimenti
+        indica il centro approssimativo dell’area del changeset.
       </p>
+      {event.changesetUrl && <a href={event.changesetUrl} target="_blank" rel="noopener noreferrer">Apri il changeset ↗</a>}
     </section>
   );
 }

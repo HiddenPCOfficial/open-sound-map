@@ -56,7 +56,7 @@ export function PlanetView({ events }: { events: WikiEvent[] }) {
             </p>
             <div className="point-actions">
               <a href={selected.url} target="_blank" rel="noopener noreferrer">
-                Apri il changeset ↗
+                Apri l’elemento ↗
               </a>
             </div>
             <EditPreview key={selected.id} event={selected} />

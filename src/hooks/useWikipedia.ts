@@ -4,6 +4,7 @@ import { LOCATION_MODE, countriesFromTopology, trackForLocation, type Country } 
 import { BUILTIN_TRACKS, type MusicTrack } from '@/lib/mp3';
 import { AudioEngine } from '@/services/AudioEngine';
 import { OpenStreetMapStream } from '@/services/OpenStreetMapStream';
+import { EventSequence } from '@/services/EventSequence';
 import { matchesTags } from '@/lib/events';
 import type { ConnectionStatus, Settings, WikiEvent } from '@/types/wiki';
 
@@ -26,6 +27,8 @@ export function useWikipedia(settings: Settings, ready: boolean) {
   const [audioState, setAudioState] = useState<'off' | 'loading' | 'on' | 'error'>('off');
   const settingsRef = useRef(settings);
   const audio = useRef<AudioEngine | null>(null);
+  const eventSequence = useRef<EventSequence | null>(null);
+  useEffect(() => { eventSequence.current?.setIntervalScale(settings.intervalScale); }, [settings.intervalScale]);
   const times = useRef<number[]>([]);
   const seen = useRef(new Set<string>());
   useEffect(() => { settingsRef.current = settings; audio.current?.setVolume(settings.volume, settings.muted); if (settings.muted || settings.volume === 0) audio.current?.stopSegment(); }, [settings]);
@@ -50,13 +53,15 @@ export function useWikipedia(settings: Settings, ready: boolean) {
   useEffect(() => {
     if (!enabled) return;
     const stream = new OpenStreetMapStream();
-    stream.connect(event => {
+    const sequence = new EventSequence(event => {
       const current = settingsRef.current;
-      if (seen.current.has(event.id)) return;
-      seen.current.add(event.id);
-      if (seen.current.size > 4000) seen.current.delete(seen.current.values().next().value!);
-      if (event.kind === 'welcome' && (current.hideWelcomes || current.tags.length > 0)) return;
       const audible = matchesTags(event, current.tags);
+      if (!audible || current.muted || current.volume === 0) {
+        console.info('[AudioEngine] Evento silenzioso', {
+          eventId: event.id,
+          motivo: !audible ? 'escluso dai filtri hashtag' : current.muted ? 'mute attivo' : 'volume zero',
+        });
+      }
       if (event.kind === 'edit' && audible) {
         times.current.push(event.receivedAt);
         setTotal(value => value + 1);
@@ -67,7 +72,9 @@ export function useWikipedia(settings: Settings, ready: boolean) {
             const track = trackForLocation(event.location, countries.current);
             setLocationTrack(track?.name ?? 'Note musicali · nessun brano per questo paese');
             void audio.current?.playLocation(event, track?.url ?? null, current.scale).catch(() => setTrackError('Impossibile caricare il brano del paese.'));
-          } else audio.current?.play(event, current.scale);
+          } else {
+            audio.current?.play(event, current.scale);
+          }
         }
         setRecent(list => [event, ...list].slice(0, 20));
       }
@@ -75,8 +82,18 @@ export function useWikipedia(settings: Settings, ready: boolean) {
         // Unmatched edits remain visible as faint, silent circles as in the original.
         setEvents(list => [...list.filter(item => event.receivedAt - item.receivedAt < (item.kind === 'welcome' ? 7000 : 60000)), event].slice(-180));
       }
-    }, setStatus);
-    return () => stream.close();
+    }, settingsRef.current.intervalScale);
+    eventSequence.current = sequence;
+    stream.connect(event => {
+      if (seen.current.has(event.id)) return;
+      seen.current.add(event.id);
+      if (seen.current.size > 100000) seen.current.delete(seen.current.values().next().value!);
+      sequence.enqueue(event);
+    }, status => {
+      console.info('[OpenStreetMapStream] Stato connessione', { status });
+      setStatus(status);
+    });
+    return () => { eventSequence.current = null; stream.close(); sequence.close(); audio.current?.stopSegment(); };
   }, [enabled]);
   useEffect(() => {
     const timer = window.setInterval(() => {

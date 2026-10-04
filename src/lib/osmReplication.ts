@@ -7,6 +7,48 @@ const parser = new XMLParser({
   ignoreAttributes: false, attributeNamePrefix: '', parseAttributeValue: false,
   isArray: name => name === 'changeset' || name === 'tag',
 });
+const elementParser = new XMLParser({
+  ignoreAttributes: false, attributeNamePrefix: '', parseAttributeValue: false,
+  isArray: name => ['create', 'modify', 'delete', 'node', 'way', 'relation', 'tag'].includes(name),
+});
+
+export function parseChangesetElements(xml: string): Record<string, unknown>[] {
+  if (XMLValidator.validate(xml) !== true) throw new Error('Invalid osmChange XML');
+  const root = elementParser.parse(xml).osmChange;
+  if (root === '') return [];
+  if (!root || typeof root !== 'object') throw new Error('Invalid osmChange document');
+  const elements: Record<string, unknown>[] = [];
+  for (const action of ['create', 'modify', 'delete']) {
+    for (const section of root[action] ?? []) {
+      for (const type of ['node', 'way', 'relation']) {
+        for (const item of section[type] ?? []) {
+          elements.push({ type, action, id: Number(item.id), version: Number(item.version), changeset: Number(item.changeset), user: item.user, timestamp: item.timestamp,
+            lat: item.lat === undefined ? undefined : Number(item.lat), lon: item.lon === undefined ? undefined : Number(item.lon),
+            tags: Object.fromEntries((item.tag ?? []).map((tag: { k: string; v: string }) => [tag.k, tag.v])),
+          });
+        }
+      }
+    }
+  }
+  // osmChange groups by action and object type, rather than edit time.
+  return elements.sort((a, b) => {
+    const first = typeof a.timestamp === 'string' ? Date.parse(a.timestamp) : NaN;
+    const second = typeof b.timestamp === 'string' ? Date.parse(b.timestamp) : NaN;
+    if (!Number.isFinite(first)) return Number.isFinite(second) ? 1 : 0;
+    if (!Number.isFinite(second)) return -1;
+    return first - second;
+  });
+}
+
+async function changesetElements(id: number, signal: AbortSignal): Promise<Record<string, unknown>[]> {
+  if (!Number.isSafeInteger(id) || id <= 0) throw new Error('Invalid changeset ID');
+  const response = await fetch(`https://api.openstreetmap.org/api/0.6/changeset/${id}/download`, {
+    headers: { 'User-Agent': 'ListenToOpenStreetMap/1.0' }, cache: 'no-store',
+    signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]),
+  });
+  if (!response.ok) throw new Error('OSM objects unavailable');
+  return parseChangesetElements(await response.text());
+}
 
 export type ReplicationCursor = { sequence: number; index: number };
 
@@ -68,8 +110,12 @@ export async function* replicationEvents(cursor: ReplicationCursor | null, signa
         const changesets = parseReplication(xml);
         if (index > changesets.length) throw new Error('Invalid replication offset');
         while (index < changesets.length && !signal.aborted) {
-          const changeset = changesets[index++];
-          yield `id: ${sequence}:${index}\ndata: ${JSON.stringify(changeset)}\n\n`;
+          const changeset = changesets[index];
+          // Advance only after the object download succeeds, so failures are retried.
+          const elements = Number(changeset.changes_count) > 0 ? await changesetElements(Number(changeset.id), signal) : [];
+          if (signal.aborted) return;
+          index++;
+          yield `id: ${sequence}:${index}\ndata: ${JSON.stringify({ ...changeset, elements })}\n\n`;
         }
         // Also checkpoint empty files. The browser sends this ID on reconnect.
         yield `id: ${sequence}:${index}\nevent: checkpoint\ndata: complete\n\n`;
