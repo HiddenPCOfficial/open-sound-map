@@ -30,10 +30,21 @@ export function useWikipedia(settings: Settings, ready: boolean) {
   const seen = useRef(new Set<string>());
   useEffect(() => { settingsRef.current = settings; audio.current?.setVolume(settings.volume, settings.muted); if (settings.muted || settings.volume === 0) audio.current?.stopSegment(); }, [settings]);
   useEffect(() => {
-    const engine = new AudioEngine();
+    const engine = new AudioEngine(() => {
+      setAudioState(current => current === 'on' ? 'off' : current);
+    });
+    const checkPlayback = () => {
+      if (!engine.isRunning()) setAudioState(current => current === 'on' ? 'off' : current);
+    };
+    document.addEventListener('visibilitychange', checkPlayback);
+    window.addEventListener('pageshow', checkPlayback);
     const urls = uploadUrls.current;
     audio.current = engine;
-    return () => { audio.current = null; engine.dispose(); urls.forEach(url => URL.revokeObjectURL(url)); };
+    return () => {
+      document.removeEventListener('visibilitychange', checkPlayback);
+      window.removeEventListener('pageshow', checkPlayback);
+      audio.current = null; engine.dispose(); urls.forEach(url => URL.revokeObjectURL(url));
+    };
   }, []);
   const enabled = ready;
   useEffect(() => {
@@ -100,6 +111,8 @@ export function useWikipedia(settings: Settings, ready: boolean) {
     const track = available.find(item => item.id === id);
     setSelectedTrack(id); setTrackError(''); setTrackLoading(Boolean(track) || id === LOCATION_MODE);
     try {
+      // Unlock both contexts during the selection gesture, before fetching borders.
+      if (id === LOCATION_MODE) await audio.current?.enable();
       await audio.current?.selectSong(track?.url ?? null);
       if (id === LOCATION_MODE && countries.current.length === 0) {
         const response = await fetch('/geo/countries-110m.json');

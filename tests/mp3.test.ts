@@ -26,6 +26,7 @@ test('MP3 segments pause, resume, ignore overlapping edits, wrap and stop on sel
   const gain = () => ({ gain: { value: 0, setTargetAtTime() {}, setValueAtTime() {}, linearRampToValueAtTime() {} }, connect() { return this; }, disconnect() {} });
   class Context {
     currentTime = 0; state = 'running'; destination = {}; sampleRate = 44100;
+    addEventListener() {} removeEventListener() {}
     createConvolver() { return { buffer: null, connect() { return this; }, disconnect() {} }; }
     createBuffer(channels: number, length: number) {
       return { numberOfChannels: channels, getChannelData: () => new Float32Array(length) };

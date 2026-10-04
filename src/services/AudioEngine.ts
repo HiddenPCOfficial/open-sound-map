@@ -1,4 +1,5 @@
 import { editDuration } from '../lib/mp3';
+import { resumePlayback } from '../lib/audio';
 import { DEFAULT_SCALE, getNote, NoteLimiter, type ScaleId } from '../lib/music';
 import type { WikiEvent } from '../types/wiki';
 import * as Tone from 'tone';
@@ -17,6 +18,14 @@ export class AudioEngine {
   private abort = new AbortController();
   private disposed = false;
   private limiter = new NoteLimiter();
+  private toneContext: ReturnType<typeof Tone.getContext> | null = null;
+  constructor(private onInterrupted: () => void = () => {}) {}
+  private checkPlayback = (): void => {
+    if (!this.disposed && !this.isRunning()) this.onInterrupted();
+  };
+  isRunning(): boolean {
+    return this.context?.state === 'running' && (!this.toneContext || this.toneContext.state === 'running');
+  }
 
   private songUrl: string | null = null;
   private songCache = new Map<string, AudioBuffer>();
@@ -102,9 +111,17 @@ export class AudioEngine {
       this.gain = this.context.createGain();
       this.gain.gain.value = 0.5;
       this.gain.connect(this.context.destination);
+      this.context.addEventListener('statechange', this.checkPlayback);
     }
-    await this.context.resume();
-    if (typeof window !== 'undefined') await Tone.start();
+    if (typeof window !== 'undefined' && !this.toneContext) {
+      this.toneContext = Tone.getContext();
+      this.toneContext.on('statechange', this.checkPlayback);
+    }
+    await resumePlayback(
+      this.toneContext ? [this.context, this.toneContext] : [this.context],
+      typeof navigator !== 'undefined' ? navigator : {},
+    );
+    if (this.disposed) throw new Error('Audio engine disposed');
     if (typeof window !== 'undefined' && !this.toneGain) {
       this.toneGain = new Tone.Gain(0.5).toDestination();
       this.toneReverb = new Tone.Reverb({ decay: 1.85, wet: 0.45 }).connect(this.toneGain);
@@ -129,6 +146,7 @@ export class AudioEngine {
       })).then(() => {}).catch(error => { this.loading = null; throw error; });
     }
     await this.loading;
+    if (!this.isRunning()) throw new Error('Audio playback is suspended');
   }
   setVolume(volume: number, muted: boolean): void {
     if (this.gain && this.context) this.gain.gain.setTargetAtTime(muted ? 0 : volume / 100, this.context.currentTime, 0.02);
@@ -166,6 +184,8 @@ export class AudioEngine {
     this.stopSegment();
     this.songRequest++;
     this.disposed = true;
+    this.context?.removeEventListener('statechange', this.checkPlayback);
+    this.toneContext?.off('statechange', this.checkPlayback);
     this.abort.abort();
     for (const source of this.active) source.stop();
     this.active.clear();

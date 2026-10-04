@@ -13,6 +13,8 @@ npm run dev
 
 Apri http://localhost:3000 e premi **Attiva audio**. Il browser richiede un gesto dell’utente per riprodurre suoni. La visualizzazione funziona anche prima dell’attivazione audio. Le note delle modifiche sono create da Tone.js; i tre campioni degli annunci vengono scaricati e decodificati al primo clic.
 
+Su iPhone, campioni e sintetizzatori vengono attivati nello stesso tocco. Dove disponibile, l’Audio Session API configura la riproduzione come musica. Se il browser sospende l’audio, il pulsante **Attiva audio** torna disponibile. Per la verifica su dispositivo: attiva l’audio e attendi le modifiche, prova la modalità musicale per paese come prima selezione, poi cambia app o blocca lo schermo e torna alla pagina; se compare il pulsante, toccalo per riprendere. Verifica anche con la modalità silenziosa dell’iPhone attiva e il volume multimediale alzato.
+
 ```sh
 npm run lint
 npm run typecheck
