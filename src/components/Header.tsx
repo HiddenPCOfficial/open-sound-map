@@ -41,15 +41,15 @@ export function Header({
           <span />
           {LABELS[status]}
         </span>
-        {audioState !== "on" && (
           <button onClick={onEnable} disabled={audioState === "loading"}>
             {audioState === "loading"
               ? "Caricamento audio…"
               : audioState === "error"
                 ? "Riprova audio"
-                : "♫ Attiva audio"}
+                : audioState === "on"
+                  ? "♫ Prova audio"
+                  : "♫ Attiva audio"}
           </button>
-        )}
         <button className="secondary" onClick={onMute} aria-pressed={muted}>
           {muted ? "Riattiva" : "Silenzia"}
         </button>
@@ -77,7 +77,7 @@ export function Header({
       </div>
       {audioState === "error" && (
         <p role="alert">
-          Caricamento audio non riuscito. Controlla la connessione e riprova.
+          Audio non avviato. Tocca Riprova audio. Se resta muto, controlla il volume multimediale e la modalità silenziosa dell’iPhone.
         </p>
       )}
     </header>

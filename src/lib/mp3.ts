@@ -4,4 +4,4 @@ export function editDuration(bytes: number, min: number, max: number): number {
   return min + (max - min) * Math.min(1, Math.log1p(size) / Math.log1p(10_000));
 }
 export interface MusicTrack { id: string; name: string; url: string }
-export const BUILTIN_TRACKS: MusicTrack[] = [{ id: 'madunina', name: 'O mia bella Madunina — Milano', url: '/music/madunina.mp3' }];
+export const BUILTIN_TRACKS: MusicTrack[] = [];

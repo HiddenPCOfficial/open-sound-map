@@ -99,6 +99,7 @@ export function useWikipedia(settings: Settings, ready: boolean) {
       await engine.enable();
       if (audio.current !== engine) return;
       engine.setVolume(settingsRef.current.volume, settingsRef.current.muted);
+      engine.playTestTone();
       setAudioState('on');
     } catch {
       if (audio.current === engine) setAudioState('error');
@@ -111,7 +112,7 @@ export function useWikipedia(settings: Settings, ready: boolean) {
     const track = available.find(item => item.id === id);
     setSelectedTrack(id); setTrackError(''); setTrackLoading(Boolean(track) || id === LOCATION_MODE);
     try {
-      // Unlock both contexts during the selection gesture, before fetching borders.
+      // Unlock audio during the selection gesture, before fetching borders.
       if (id === LOCATION_MODE) await audio.current?.enable();
       await audio.current?.selectSong(track?.url ?? null);
       if (id === LOCATION_MODE && countries.current.length === 0) {

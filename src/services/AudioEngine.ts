@@ -1,5 +1,5 @@
 import { editDuration } from '../lib/mp3';
-import { resumePlayback } from '../lib/audio';
+import { resumePlayback, unlockAudioContext } from '../lib/audio';
 import { DEFAULT_SCALE, getNote, NoteLimiter, type ScaleId } from '../lib/music';
 import type { WikiEvent } from '../types/wiki';
 import * as Tone from 'tone';
@@ -8,7 +8,6 @@ import * as Tone from 'tone';
 export class AudioEngine {
   private context: AudioContext | null = null;
   private gain: GainNode | null = null;
-  private toneGain: Tone.Gain | null = null;
   private addSynth: Tone.PolySynth<Tone.Synth> | null = null;
   private removeSynth: Tone.PolySynth<Tone.Synth> | null = null;
   private toneReverb: Tone.Reverb | null = null;
@@ -18,7 +17,7 @@ export class AudioEngine {
   private abort = new AbortController();
   private disposed = false;
   private limiter = new NoteLimiter();
-  private toneContext: ReturnType<typeof Tone.getContext> | null = null;
+  private toneContext: Tone.Context | null = null;
   constructor(private onInterrupted: () => void = () => {}) {}
   private checkPlayback = (): void => {
     if (!this.disposed && !this.isRunning()) this.onInterrupted();
@@ -114,24 +113,34 @@ export class AudioEngine {
       this.context.addEventListener('statechange', this.checkPlayback);
     }
     if (typeof window !== 'undefined' && !this.toneContext) {
-      this.toneContext = Tone.getContext();
-      this.toneContext.on('statechange', this.checkPlayback);
+      // Tone voices and native MP3 sources must use the same hardware context.
+      this.toneContext = new Tone.Context({ context: this.context });
+      Tone.setContext(this.toneContext);
     }
-    await resumePlayback(
-      this.toneContext ? [this.context, this.toneContext] : [this.context],
+    const resuming = resumePlayback(
+      [this.context],
       typeof navigator !== 'undefined' ? navigator : {},
     );
+    unlockAudioContext(this.context);
+    await resuming;
     if (this.disposed) throw new Error('Audio engine disposed');
-    if (typeof window !== 'undefined' && !this.toneGain) {
-      this.toneGain = new Tone.Gain(0.5).toDestination();
-      this.toneReverb = new Tone.Reverb({ decay: 1.85, wet: 0.45 }).connect(this.toneGain);
-      this.addSynth = new Tone.PolySynth(Tone.Synth, {
-        oscillator: { type: 'sine1' },
-        envelope: { attack: 0.05, decay: 0.28, sustain: 0.18, release: 1.6 },
+    if (this.toneContext && !this.addSynth) {
+      this.toneReverb = new Tone.Reverb({ context: this.toneContext, decay: 1.85, wet: 0.45 }).connect(this.gain!);
+      this.addSynth = new Tone.PolySynth({
+        context: this.toneContext,
+        voice: Tone.Synth,
+        options: {
+          oscillator: { type: 'sine1' },
+          envelope: { attack: 0.05, decay: 0.28, sustain: 0.18, release: 1.6 },
+        },
       }).connect(this.toneReverb);
-      this.removeSynth = new Tone.PolySynth(Tone.Synth, {
-        oscillator: { type: 'sine7' },
-        envelope: { attack: 0.004, decay: 0.12, sustain: 0.08, release: 0.42 },
+      this.removeSynth = new Tone.PolySynth({
+        context: this.toneContext,
+        voice: Tone.Synth,
+        options: {
+          oscillator: { type: 'sine7' },
+          envelope: { attack: 0.004, decay: 0.12, sustain: 0.08, release: 0.42 },
+        },
       }).connect(this.toneReverb);
       this.addSynth.maxPolyphony = 30;
       this.removeSynth.maxPolyphony = 30;
@@ -150,7 +159,20 @@ export class AudioEngine {
   }
   setVolume(volume: number, muted: boolean): void {
     if (this.gain && this.context) this.gain.gain.setTargetAtTime(muted ? 0 : volume / 100, this.context.currentTime, 0.02);
-    this.toneGain?.gain.rampTo(muted ? 0 : volume / 100, 0.02);
+  }
+  playTestTone(): void {
+    if (!this.context || !this.gain || !this.isRunning()) return;
+    const now = this.context.currentTime;
+    const source = this.context.createOscillator();
+    const envelope = this.context.createGain();
+    source.frequency.value = 440;
+    envelope.gain.setValueAtTime(0, now);
+    envelope.gain.linearRampToValueAtTime(0.3, now + 0.02);
+    envelope.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+    source.connect(envelope).connect(this.gain);
+    this.track(source, envelope);
+    source.start(now);
+    source.stop(now + 0.4);
   }
   play(event: WikiEvent, scale: ScaleId = DEFAULT_SCALE): void {
     if (!this.context || this.context.state !== 'running' || !this.gain) return;
@@ -174,7 +196,7 @@ export class AudioEngine {
     const midi = event.newPage ? 60 : getNote(event.delta, scale);
     const velocity = event.bot ? 0.28 : event.newPage ? 0.85 : 0.68;
     const synth = event.delta >= 0 ? this.addSynth : this.removeSynth;
-    synth?.triggerAttackRelease(Tone.Frequency(midi, 'midi').toFrequency(), '8n', Tone.now(), velocity);
+    synth?.triggerAttackRelease(440 * 2 ** ((midi - 69) / 12), 0.25, this.toneContext!.now(), velocity);
   }
   private track(source: AudioScheduledSourceNode, gain: GainNode): void {
     this.active.add(source);
@@ -185,7 +207,6 @@ export class AudioEngine {
     this.songRequest++;
     this.disposed = true;
     this.context?.removeEventListener('statechange', this.checkPlayback);
-    this.toneContext?.off('statechange', this.checkPlayback);
     this.abort.abort();
     for (const source of this.active) source.stop();
     this.active.clear();
@@ -195,8 +216,8 @@ export class AudioEngine {
     this.addSynth?.dispose();
     this.removeSynth?.dispose();
     this.toneReverb?.dispose();
-    this.toneGain?.dispose();
     this.gain?.disconnect();
-    void this.context?.close();
+    if (this.toneContext) this.toneContext.dispose();
+    else void this.context?.close();
   }
 }

@@ -20,7 +20,11 @@ test('MP3 segments pause, resume, ignore overlapping edits, wrap and stop on sel
     buffer: unknown; onended: (() => void) | null = null;
     args: number[] = []; stopped = false;
     connect() { return this; } disconnect() {}
-    start(...args: number[]) { this.args = args; }
+    start(...args: number[]) {
+      this.args = args;
+      // The one-frame unlock source is separate from audible MP3 segments.
+      if ((this.buffer as { length?: number } | undefined)?.length !== 1) sources.push(this);
+    }
     stop() { this.stopped = true; }
   }
   const gain = () => ({ gain: { value: 0, setTargetAtTime() {}, setValueAtTime() {}, linearRampToValueAtTime() {} }, connect() { return this; }, disconnect() {} });
@@ -29,10 +33,10 @@ test('MP3 segments pause, resume, ignore overlapping edits, wrap and stop on sel
     addEventListener() {} removeEventListener() {}
     createConvolver() { return { buffer: null, connect() { return this; }, disconnect() {} }; }
     createBuffer(channels: number, length: number) {
-      return { numberOfChannels: channels, getChannelData: () => new Float32Array(length) };
+      return { numberOfChannels: channels, length, getChannelData: () => new Float32Array(length) };
     }
     createGain = gain;
-    createBufferSource() { const source = new Source(); sources.push(source); return source; }
+    createBufferSource() { return new Source(); }
     async decodeAudioData() { return { duration: 6 }; }
     async resume() {} async close() {}
   }
