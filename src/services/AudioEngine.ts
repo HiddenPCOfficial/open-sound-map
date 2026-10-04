@@ -112,7 +112,6 @@ export class AudioEngine {
       this.gain.connect(this.context.destination);
       this.context.addEventListener('statechange', this.checkPlayback);
     }
-<<<<<<< Updated upstream
     if (typeof window !== 'undefined' && !this.toneContext) {
       // Tone voices and native MP3 sources must use the same hardware context.
       this.toneContext = new Tone.Context({ context: this.context });
@@ -126,7 +125,7 @@ export class AudioEngine {
     await resuming;
     if (this.disposed) throw new Error('Audio engine disposed');
     if (this.toneContext && !this.addSynth) {
-      this.toneReverb = new Tone.Reverb({ context: this.toneContext, decay: 1.85, wet: 0.45 }).connect(this.gain!);
+      this.toneReverb = new Tone.Reverb({ context: this.toneContext, decay: 1.85, wet: 0.50 }).connect(this.gain!);
       this.addSynth = new Tone.PolySynth({
         context: this.toneContext,
         voice: Tone.Synth,
@@ -139,24 +138,9 @@ export class AudioEngine {
         context: this.toneContext,
         voice: Tone.Synth,
         options: {
-          oscillator: { type: 'sine7' },
-          envelope: { attack: 0.004, decay: 0.12, sustain: 0.08, release: 0.42 },
+          oscillator: { type: 'sawtooth' },
+          envelope: { attack: 0.001, decay: 0.12, sustain: 0.08, release: 0.42 },
         },
-=======
-    await this.context.resume();
-    if (typeof window !== 'undefined') await Tone.start();
-    if (typeof window !== 'undefined' && !this.toneGain) {
-      this.toneGain = new Tone.Gain(0.5).toDestination();
-      this.toneReverb = new Tone.Reverb({ decay: 1.85, wet: 0.50 }).connect(this.toneGain);
-      this.addSynth = new Tone.PolySynth(Tone.Synth, {
-        oscillator: { type: 'sine1' },
-        envelope: { attack: 0.05, decay: 0.28, sustain: 0.18, release: 1.6 },
-      }).connect(this.toneReverb);
-      //
-      this.removeSynth = new Tone.PolySynth(Tone.Synth, {
-        oscillator: { type: 'sawtooth' },
-        envelope: { attack: 0.01, decay: 0.12, sustain: 0.08, release: 0.42 },
->>>>>>> Stashed changes
       }).connect(this.toneReverb);
       this.addSynth.maxPolyphony = 30;
       this.removeSynth.maxPolyphony = 30;
