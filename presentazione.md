@@ -171,7 +171,6 @@ Il conteggio OSM non distingue, in questa pipeline, aggiunte da rimozioni: il `d
 | Risorsa | Quando viene richiesta | Funzione |
 | --- | --- | --- |
 | `/geo/countries-110m.json` | All’apertura del pianeta; anche alla prima selezione della musica per posizione | Confini del globo e riconoscimento locale del paese |
-| `/sounds/swells/swell1.mp3`, `swell2.mp3`, `swell3.mp3` | All’inizializzazione dell’audio | Campioni caricati dal motore; il flusso OSM attuale genera eventi `edit`, non annunci `welcome` |
 | `/location/italy.mp3` | Quando la modalità geografica seleziona il brano italiano, se non già nella cache audio | Accompagnamento musicale per eventi localizzati in Italia |
 | URL del brano selezionato | Alla selezione, se non già nella cache audio | Caricamento e decodifica dell’MP3 |
 

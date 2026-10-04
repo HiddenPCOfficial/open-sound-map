@@ -64,11 +64,11 @@ test('MP3 segments pause, resume, ignore overlapping edits, wrap and stop on sel
     sources[2].onended!();
     await engine.selectSong('/other.mp3');
     engine.play({ kind: 'welcome' } as WikiEvent);
-    // Welcome samples remain audible even when an optional music track is selected.
-    assert.equal(sources.length, 4);
+    // Welcome events do not produce audio, including with a selected music track.
+    assert.equal(sources.length, 3);
     engine.play(event);
     engine.dispose();
-    assert.equal(sources[4].stopped, true);
+    assert.equal(sources[3].stopped, true);
   } finally {
     engine.dispose(); globalThis.AudioContext = originalContext; globalThis.fetch = originalFetch;
   }

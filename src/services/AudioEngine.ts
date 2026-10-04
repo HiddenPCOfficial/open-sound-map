@@ -4,16 +4,14 @@ import { DEFAULT_SCALE, getNote, NoteLimiter, type ScaleId } from '../lib/music'
 import type { WikiEvent } from '../types/wiki';
 import * as Tone from 'tone';
 
-/** Owns audio resources outside React; Tone.js synthesizes map edits while samples handle welcomes/music. */
+/** Owns audio resources outside React; Tone.js synthesizes map edits alongside MP3 music. */
 export class AudioEngine {
   private context: AudioContext | null = null;
   private gain: GainNode | null = null;
   private addSynth: Tone.PolySynth<Tone.Synth> | null = null;
   private removeSynth: Tone.PolySynth<Tone.Synth> | null = null;
   private toneReverb: Tone.Reverb | null = null;
-  private buffers = new Map<string, AudioBuffer>();
   private active = new Set<AudioScheduledSourceNode>();
-  private loading: Promise<void> | null = null;
   private abort = new AbortController();
   private disposed = false;
   private limiter = new NoteLimiter();
@@ -145,17 +143,6 @@ export class AudioEngine {
       this.addSynth.maxPolyphony = 30;
       this.removeSynth.maxPolyphony = 30;
     }
-    //questi swells non stanno funzionando sarebbe il caso di rimoverli?
-    if (!this.loading) {
-      const paths = ['swells/swell1', 'swells/swell2', 'swells/swell3'];
-      this.loading = Promise.all(paths.map(async path => {
-        const response = await fetch(`/sounds/${path}.mp3`, { signal: this.abort.signal });
-        if (!response.ok) throw new Error(`Impossibile caricare ${path}`);
-        const buffer = await this.context!.decodeAudioData(await response.arrayBuffer());
-        if (!this.disposed) this.buffers.set(path, buffer);
-      })).then(() => {}).catch(error => { this.loading = null; throw error; });
-    }
-    await this.loading;
     if (!this.isRunning()) throw new Error('Audio playback is suspended');
   }
   setVolume(volume: number, muted: boolean): void {
@@ -176,24 +163,13 @@ export class AudioEngine {
     source.stop(now + 0.4);
   }
   play(event: WikiEvent, scale: ScaleId = DEFAULT_SCALE): void {
+    if (event.kind !== 'edit') return;
     if (!this.context || this.context.state !== 'running' || !this.gain) return;
     if (this.songLoading) return;
     // A selected MP3 may accompany an edit, but it never replaces its scale note.
     if (this.song && event.kind === 'edit') this.playSegment(event.delta);
     const now = this.context.currentTime;
     if (!this.limiter.allow(now) || this.active.size >= 30) return;
-    if (event.kind === 'welcome') {
-      const buffer = this.buffers.get(`swells/swell${1 + Math.floor(Math.random() * 3)}`);
-      if (!buffer) return;
-      const source = this.context.createBufferSource();
-      const gain = this.context.createGain();
-      gain.gain.value = event.bot ? 0.35 : 1;
-      source.buffer = buffer;
-      source.connect(gain).connect(this.gain);
-      this.track(source, gain);
-      source.start();
-      return;
-    }
     const midi = event.newPage ? 60 : getNote(event.delta, scale);
     const velocity = event.bot ? 0.28 : event.newPage ? 0.85 : 0.68;
     const synth = event.delta >= 0 ? this.addSynth : this.removeSynth;
@@ -211,7 +187,6 @@ export class AudioEngine {
     this.abort.abort();
     for (const source of this.active) source.stop();
     this.active.clear();
-    this.buffers.clear();
     this.songCache.clear();
     this.songCursors.clear();
     this.addSynth?.dispose();
