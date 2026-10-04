@@ -112,6 +112,7 @@ export class AudioEngine {
       this.gain.connect(this.context.destination);
       this.context.addEventListener('statechange', this.checkPlayback);
     }
+<<<<<<< Updated upstream
     if (typeof window !== 'undefined' && !this.toneContext) {
       // Tone voices and native MP3 sources must use the same hardware context.
       this.toneContext = new Tone.Context({ context: this.context });
@@ -141,10 +142,26 @@ export class AudioEngine {
           oscillator: { type: 'sine7' },
           envelope: { attack: 0.004, decay: 0.12, sustain: 0.08, release: 0.42 },
         },
+=======
+    await this.context.resume();
+    if (typeof window !== 'undefined') await Tone.start();
+    if (typeof window !== 'undefined' && !this.toneGain) {
+      this.toneGain = new Tone.Gain(0.5).toDestination();
+      this.toneReverb = new Tone.Reverb({ decay: 1.85, wet: 0.50 }).connect(this.toneGain);
+      this.addSynth = new Tone.PolySynth(Tone.Synth, {
+        oscillator: { type: 'sine1' },
+        envelope: { attack: 0.05, decay: 0.28, sustain: 0.18, release: 1.6 },
+      }).connect(this.toneReverb);
+      //
+      this.removeSynth = new Tone.PolySynth(Tone.Synth, {
+        oscillator: { type: 'sawtooth' },
+        envelope: { attack: 0.01, decay: 0.12, sustain: 0.08, release: 0.42 },
+>>>>>>> Stashed changes
       }).connect(this.toneReverb);
       this.addSynth.maxPolyphony = 30;
       this.removeSynth.maxPolyphony = 30;
     }
+    //questi swells non stanno funzionando sarebbe il caso di rimoverli?
     if (!this.loading) {
       const paths = ['swells/swell1', 'swells/swell2', 'swells/swell3'];
       this.loading = Promise.all(paths.map(async path => {
