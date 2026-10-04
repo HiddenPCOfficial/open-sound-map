@@ -62,7 +62,11 @@ La SSE riceve tutte le modifiche pubbliche Wikimedia: lingue e hashtag vengono f
 
 ## Attribuzioni e licenza
 
-Progetto originale: [Hatnote / Listen to Wikipedia](https://github.com/hatnote/listen-to-wikipedia), Stephen LaPorte e Mahmoud Hashemi. Ispirazione: BitListen di Maximillian Laumeister. Campioni audio riutilizzati dalla cartella `static/sounds` originale; licenza originale conservata in [LICENSE](LICENSE).
+Il codice del progetto è distribuito con licenza libera **BSD-3-Clause**, riportata in [LICENSE](LICENSE). Consente uso, modifica e redistribuzione, anche commerciale, mantenendo gli avvisi di copyright, le condizioni e l'esclusione di garanzia. I nomi degli autori non possono essere usati per promuovere prodotti derivati senza autorizzazione.
+
+Copyright © 2026 per questa versione Next.js e React.
+
+Progetto originale: [Hatnote / Listen to Wikipedia](https://github.com/hatnote/listen-to-wikipedia), Stephen LaPorte e Mahmoud Hashemi. Ispirazione: BitListen di Maximillian Laumeister. Campioni audio riutilizzati dalla cartella `static/sounds` originale. Gli avvisi originali BSD e MIT sono conservati in [LICENSE](LICENSE); dipendenze, dati e materiali di terzi mantengono le rispettive licenze.
 
 ### Vista Pianeta 3D
 
