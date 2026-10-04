@@ -4,7 +4,7 @@ import type { Settings } from '../types/wiki';
 
 export const DEFAULT_INTERVAL_SCALE = 0.08;
 export function isIntervalScale(value: number): boolean {
-  return Number.isFinite(value) && value >= 0.01 && value <= 10;
+  return Number.isFinite(value) && value >= 0.05 && value <= 0.25;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
